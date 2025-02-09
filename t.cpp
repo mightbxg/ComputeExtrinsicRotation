@@ -95,6 +95,35 @@ struct Solution1 : Solution {
   }
 };
 
+struct Solution2 : Solution {
+  string name() const { return "Solution2"; }
+
+  Eigen::Quaterniond exec(const Eigen::Vector3d& g_imu, const Eigen::Vector3d& a_imu) const override {
+    Eigen::Vector3d g_vehicle(0, 0, 1);
+    Eigen::Vector3d a_vehicle(1, 0, 0);
+
+    Eigen::Vector3d a1 = g_imu.normalized();
+    Eigen::Vector3d a2 = a_imu.normalized();
+    const auto& b1 = g_vehicle;
+    const auto& b2 = a_vehicle;
+
+    // Compute orthogonal vectors to complete the basis
+    Eigen::Vector3d a3 = a1.cross(a2).normalized();
+    Eigen::Vector3d b3 = b1.cross(b2).normalized();
+
+    // Construct orthonormal basis matrices
+    Eigen::Matrix3d A, B;
+    A << a1, a2, a3;
+    B << b1, b2, b3;
+
+    // Compute rotation matrix: R = B * A^T
+    Eigen::Matrix3d R = B * A.transpose();
+
+    // Convert to quaternion (ensure it's a proper rotation)
+    return Eigen::Quaterniond(R).normalized();
+  }
+};
+
 void test_solution(const AccObGenerator& gen, const Solution& solution) {
   cout << "\33[33m" << "test " << solution.name() << "----------------------------\33[m\n";
   for (size_t i = 0; i < gen.params.size(); ++i) {
@@ -118,5 +147,5 @@ int main() {
 
   AccObGenerator gen;
   gen.generate(yprs);
-  test_solution(gen, Solution1());
+  test_solution(gen, Solution2());
 }
