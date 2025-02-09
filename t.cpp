@@ -5,8 +5,12 @@
 
 using namespace std;
 
+constexpr double kPi = 3.14159265358979323846;
+constexpr double kDeg2Rad = kPi / 180.0;
+constexpr double kRad2Deg = 180.0 / kPi;
+
 template <typename Scalar = double>
-inline Eigen::Matrix<Scalar, 3, 1> RMat2Ypr(const Eigen::Matrix<Scalar, 3, 3> &R) {
+inline Eigen::Matrix<Scalar, 3, 1> RMat2Ypr(const Eigen::Matrix<Scalar, 3, 3>& R) {
   Scalar y = atan2(R(1, 0), R(0, 0));
   Scalar p = atan2(R(0, 2) * sin(y) - R(1, 2) * cos(y), -R(0, 1) * sin(y) + R(1, 1) * cos(y));
   Scalar r = atan2(-R(2, 0), R(0, 0) * cos(y) + R(1, 0) * sin(y));
@@ -14,7 +18,7 @@ inline Eigen::Matrix<Scalar, 3, 1> RMat2Ypr(const Eigen::Matrix<Scalar, 3, 3> &R
 }
 
 template <typename Scalar = double>
-Eigen::Matrix<Scalar, 3, 3> Ypr2RMat(const Eigen::Matrix<Scalar, 3, 1> &ypr) {
+Eigen::Matrix<Scalar, 3, 3> Ypr2RMat(const Eigen::Matrix<Scalar, 3, 1>& ypr) {
   const Scalar y = ypr(0);
   const Scalar p = ypr(1);
   const Scalar r = ypr(2);
@@ -36,7 +40,7 @@ Eigen::Matrix<Scalar, 3, 3> Ypr2RMat(const Eigen::Matrix<Scalar, 3, 1> &ypr) {
 struct AccOb {
   AccOb() = default;
 
-  AccOb(const Eigen::Vector3d &_g, const Eigen::Vector3d &_a) : g(_g), a(_a) {}
+  AccOb(const Eigen::Vector3d& _g, const Eigen::Vector3d& _a) : g(_g), a(_a) {}
 
   Eigen::Vector3d g;
   Eigen::Vector3d a;
@@ -47,15 +51,15 @@ struct AccObGenerator {
   vector<AccOb> obs_imu;
   vector<Eigen::Matrix3d> params;
 
-  auto &generate(const vector<Eigen::Vector3d> &yprs) {
+  auto& generate(const vector<Eigen::Vector3d>& yprs) {
     params.clear();
     params.reserve(yprs.size());
     obs_imu.clear();
     obs_imu.reserve(yprs.size());
-    for (const auto &ypr_deg : yprs) {
-      Eigen::Vector3d ypr = ypr_deg * M_PI / 180.0;
+    for (const auto& ypr_deg : yprs) {
+      Eigen::Vector3d ypr = ypr_deg * kDeg2Rad;
       params.emplace_back(Ypr2RMat(ypr).transpose());
-      auto &rmat = params.back();
+      auto& rmat = params.back();
       obs_imu.emplace_back(rmat * ob_vehicle.g, rmat * ob_vehicle.a);
     }
     return obs_imu;
@@ -65,18 +69,21 @@ struct AccObGenerator {
 struct Solution {
   virtual ~Solution() = default;
 
-  virtual Eigen::Quaterniond exec(const Eigen::Vector3d &g_imu, const Eigen::Vector3d &a_imu) = 0;
+  virtual string name() const { return "Solution"; }
+  virtual Eigen::Quaterniond exec(const Eigen::Vector3d& g_imu, const Eigen::Vector3d& a_imu) const = 0;
 };
 
 struct Solution1 : Solution {
-  Eigen::Quaterniond exec(const Eigen::Vector3d &g_imu, const Eigen::Vector3d &a_imu) override {
+  string name() const { return "Solution1"; }
+
+  Eigen::Quaterniond exec(const Eigen::Vector3d& g_imu, const Eigen::Vector3d& a_imu) const override {
     Eigen::Vector3d g_vehicle(0, 0, 1);
     Eigen::Vector3d a_vehicle(1, 0, 0);
 
     Eigen::Vector3d a1 = g_imu.normalized();
     Eigen::Vector3d a2 = a_imu.normalized();
-    const auto &b1 = g_vehicle;
-    const auto &b2 = a_vehicle;
+    const auto& b1 = g_vehicle;
+    const auto& b2 = a_vehicle;
 
     Eigen::Quaterniond q1 = Eigen::Quaterniond::FromTwoVectors(a1, b1);
     Eigen::Vector3d a2_prime = q1 * a2;
@@ -88,15 +95,28 @@ struct Solution1 : Solution {
   }
 };
 
-void test_solution(const AccObGenerator &gen, Solution *solution) {
-  if (!solution) return;
+void test_solution(const AccObGenerator& gen, const Solution& solution) {
+  cout << "\33[33m" << "test " << solution.name() << "----------------------------\33[m\n";
+  for (size_t i = 0; i < gen.params.size(); ++i) {
+    Eigen::Matrix3d rmat = gen.params.at(i).transpose();
+    auto gt = RMat2Ypr(rmat);
+    const auto& d = gen.obs_imu.at(i);
+    auto q = solution.exec(d.g, d.a);
+    auto res = RMat2Ypr(q.toRotationMatrix());
+    cout << "data " << i << ": g[" << d.g.transpose() << "] a[" << d.a.transpose() << "]\n";
+    cout << "     gt: " << gt.transpose() * kRad2Deg << "\n";
+    cout << "    res: " << res.transpose() * kRad2Deg << "\n";
+  }
 }
 
 int main() {
   vector<Eigen::Vector3d> yprs;
   yprs.emplace_back(0, 0, 0);
   yprs.emplace_back(30, 2, -2);
+  yprs.emplace_back(120, 97, -2);
+  yprs.emplace_back(80, -90, 160);
 
   AccObGenerator gen;
   gen.generate(yprs);
+  test_solution(gen, Solution1());
 }
